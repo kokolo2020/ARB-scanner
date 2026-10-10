@@ -19,6 +19,7 @@ export default async () => {
   });
 
   const rows = Object.keys(books).length > 1 ? cross(books, CFG.size, CFG.fee, 0, CFG.cap).rows : [];
+  // (only routes between exchanges that answered this minute are present, since cross() uses books we got)
   const candidates = selectCandidates(rows, CFG);
 
   const jobs = new Map();

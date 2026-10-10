@@ -8,6 +8,7 @@ export const CFG = {
   size: 200,            // USDT per paper trade
   fee: 0.001,           // taker fee per side (0.1%)
   cap: 0.10,            // ignore gross spreads above 10% (almost always bad data)
+  watch: ["OBT", "LUNC", "EGLD"], // if non-empty, simulate only these coins (every route, every minute)
   topN: 8,              // candidates deep-checked per minute
   minQuotedNet: 0,      // only deep-check candidates that look profitable on top-of-book
   cooldownMin: 15,      // don't re-trade the same coin+route within this many minutes
@@ -21,11 +22,12 @@ export function emptyState(now) {
   return {
     version: 1, startedAt: now, lastRun: null, runs: 0, cfg: CFG,
     exStatus: {}, trades: [], tradeCount: 0, profit: 0, volume: 0,
-    byCoin: {}, inv: {}, lastPx: {}, cooldown: {}, open: {}, lifetimes: [], hours: {},
+    byCoin: {}, watch: {}, inv: {}, lastPx: {}, cooldown: {}, open: {}, lifetimes: [], hours: {},
   };
 }
 
 export function selectCandidates(rows, cfg = CFG) {
+  if (cfg.watch && cfg.watch.length) return rows.filter((r) => cfg.watch.includes(r.base));
   return rows.filter((r) => r.net > cfg.minQuotedNet).sort((a, b) => b.net - a.net).slice(0, cfg.topN);
 }
 
@@ -52,6 +54,9 @@ export function stepSim(state, { candidates, details, exErr = {}, exOk = [] }, n
     if (bad) { h.err++; continue; }
     const v = verifyRow(bb, sb, bt && !bt.error ? bt : null, st && !st.error ? st : null, cfg.size, cfg.fee, 0, now);
     h[v.verdict.toLowerCase()]++;
+    const w = (state.watch || (state.watch = {}))[r.base] || (state.watch[r.base] = { checks: 0, real: 0, small: 0, stale: 0, no: 0, bestNet: -1 });
+    w.checks++; w[v.verdict.toLowerCase()]++;
+    if (v.atSize && v.atSize.net > w.bestNet) w.bestNet = v.atSize.net;
     const key = r.base + ":" + r.buy + ">" + r.sell;
 
     if (v.verdict === "REAL" || v.verdict === "SMALL") {
@@ -112,7 +117,7 @@ export function summarize(s) {
     startedAt: s.startedAt, lastRun: s.lastRun, runs: s.runs, cfg: s.cfg, exStatus: s.exStatus,
     tradeCount: s.tradeCount, profit: s.profit, volume: s.volume,
     rebalanceMoved: moved, rebalanceCost, netAfterRebalance: s.profit - rebalanceCost,
-    days,
+    days, watch: s.watch || {},
     byCoin: Object.entries(s.byCoin).map(([coin, v]) => ({ coin, ...v })).sort((a, b) => b.profit - a.profit).slice(0, 10),
     trades: s.trades.slice(-20).reverse(),
     lifetimes: { count: life.length, median: life.length ? life[Math.floor(life.length / 2)] : null, max: life.length ? life[life.length - 1] : null, over5: life.filter((x) => x >= 5).length },
