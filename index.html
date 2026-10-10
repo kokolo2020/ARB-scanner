@@ -59,6 +59,7 @@ td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
     <label>Ignore spread above (%)<input id="cap" type="number" value="10" step="1" min="0.1" inputmode="decimal"></label>
     <label>Triangle start<select id="start"><option>USDT</option><option>USDC</option></select></label>
     <label>Auto interval<select id="interval"><option value="5">5 s</option><option value="10" selected>10 s</option><option value="30">30 s</option><option value="60">60 s</option></select></label>
+    <label>Deep-check top<select id="deepN"><option value="5">5</option><option value="10" selected>10</option><option value="15">15</option></select></label>
   </div>
   <div class="row" id="exRow" style="align-items:center;gap:14px">
     <span class="mut" style="font-size:11px">Exchanges</span>
@@ -70,6 +71,7 @@ td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
   <div class="row">
     <button id="scanBtn">Scan now</button>
     <button id="autoBtn">Auto: off</button>
+    <button id="deepBtn">Deep check</button>
   </div>
   <div class="note">Net % = after fees on every leg (and transfer cost for cross-exchange). Cross-exchange assumes you hold funds on both exchanges or accept transfer delay.</div>
 </div>
@@ -87,6 +89,7 @@ td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
 <div class="tabs">
   <button data-tab="tri" class="act">Triangular</button>
   <button data-tab="cross">Cross-exchange</button>
+  <button data-tab="deep">Verified</button>
   <button data-tab="log">Log</button>
 </div>
 
@@ -153,6 +156,74 @@ function cross(books,size,fee,transfer,cap){
     }
   }
   return{rows,dropped};
+}
+// ---- deep check: order books + recent trades ----
+function normBook(ex,d){
+  let a,b;
+  if(ex==='kucoin'){a=d.data&&d.data.asks;b=d.data&&d.data.bids;}
+  else if(ex==='bybit'){a=d.result&&d.result.a;b=d.result&&d.result.b;}
+  else if(ex==='okx'){const x=d.data&&d.data[0];a=x&&x.asks;b=x&&x.bids;}
+  else{a=d.asks;b=d.bids;}
+  const f=l=>(l||[]).map(r=>[+r[0],+r[1]]).filter(r=>r[0]>0&&r[1]>0);
+  return{asks:f(a).sort((x,y)=>x[0]-y[0]),bids:f(b).sort((x,y)=>y[0]-x[0])};
+}
+function normTrades(ex,d){
+  let arr=[];
+  if(ex==='kucoin')arr=(d.data||[]).map(t=>({ts:Number(t.time)/1e6,price:+t.price}));
+  else if(ex==='bybit')arr=((d.result&&d.result.list)||[]).map(t=>({ts:+t.time,price:+t.price}));
+  else if(ex==='okx')arr=(d.data||[]).map(t=>({ts:+t.ts,price:+t.px}));
+  else arr=(Array.isArray(d)?d:[]).map(t=>({ts:+t.time,price:+t.price}));
+  arr=arr.filter(t=>isFinite(t.ts)&&t.price>0);
+  if(!arr.length)return null;
+  arr.sort((x,y)=>y.ts-x.ts);
+  return{last:arr[0],count:arr.length};
+}
+function walkBuy(asks,spend){
+  let rem=spend,qty=0;
+  for(const[p,q]of asks){const cost=p*q;if(rem>=cost){qty+=q;rem-=cost;}else{qty+=rem/p;rem=0;break;}}
+  return{qty,spent:spend-rem,full:rem<=spend*1e-9};
+}
+function walkSell(bids,qty){
+  let rem=qty,got=0;
+  for(const[p,q]of bids){if(rem>=q){got+=p*q;rem-=q;}else{got+=p*rem;rem=0;break;}}
+  return{proceeds:got,sold:qty-rem,full:rem<=qty*1e-9};
+}
+function evalSize(buyBook,sellBook,size,fee,transfer){
+  const b=walkBuy(buyBook.asks,size*(1-fee));
+  if(!b.full)return{ok:false,reason:'buy-depth',fillable:b.spent/(1-fee)};
+  const s=walkSell(sellBook.bids,b.qty);
+  if(!s.full)return{ok:false,reason:'sell-depth',fillable:size*(s.sold/b.qty)};
+  const profit=s.proceeds*(1-fee)-size-transfer;
+  return{ok:true,profit,net:profit/size,buyAvg:size*(1-fee)/b.qty,sellAvg:s.proceeds/b.qty};
+}
+const GRID=[25,50,100,250,500,1000,2500,5000,10000];
+function bestSize(buyBook,sellBook,fee,transfer,sizeWanted){
+  const atSize=evalSize(buyBook,sellBook,sizeWanted,fee,transfer);
+  let best=null;
+  for(const s of GRID){
+    const r=evalSize(buyBook,sellBook,s,fee,transfer);
+    if(!r.ok)break;
+    if(r.profit>0&&(!best||r.profit>best.profit))best={size:s,profit:r.profit,net:r.net};
+  }
+  return{atSize,best};
+}
+function staleInfo(t,mid,now){
+  if(!t)return{age:null,dev:null,stale:true};
+  const age=(now-t.last.ts)/1000;
+  const dev=mid>0?Math.abs(t.last.price-mid)/mid:null;
+  return{age,dev,stale:age>300||(dev!==null&&dev>0.01)};
+}
+function verifyRow(bb,sb,bt,st,size,fee,transfer,now){
+  const{atSize,best}=bestSize(bb,sb,fee,transfer,size);
+  const mid=bk=>(bk.asks[0][0]+bk.bids[0][0])/2;
+  const buyT=staleInfo(bt,mid(bb),now),sellT=staleInfo(st,mid(sb),now);
+  const stale=buyT.stale||sellT.stale;
+  let verdict;
+  if(atSize.ok&&atSize.profit>0&&!stale)verdict='REAL';
+  else if(best&&!stale)verdict='SMALL';
+  else if(stale)verdict='STALE';
+  else verdict='NO';
+  return{atSize,best,buyT,sellT,verdict};
 }
 // ===CORE END===
 
@@ -294,6 +365,8 @@ function render(){
       rows.map(r=>`<tr><td>${esc(r.base)}</td><td>${esc(r.buy)}</td><td>${esc(r.sell)}</td><td class="n">${px(r.buyPx)}</td><td class="n">${px(r.sellPx)}</td><td class="n">${pct(r.gross)}</td><td class="n ${cls(r.net)}">${pct(r.net)}</td><td class="n ${cls(r.profit)}">${usd(r.profit)}</td><td class="n ${r.liq!==null&&r.liq<settings().size?'warn':''}">${r.liq===null?'unknown':usd(r.liq)+(r.liqPartial?'*':'')}</td><td class="n">${r.seen||'-'}</td></tr>`).join('')
     }</tbody></table></div><div class="note">Top 30 of ${state.cross.length} USDT pairs. * = only one side's size known. Orange = top-of-book smaller than your trade size. ${state.dropped} spreads above the ignore cap were dropped (usually delisted coins, stale quotes or same-ticker different tokens).</div>`
     :'<div class="mut">No data yet. Press Scan now.</div>';
+  }else if(state.tab==='deep'){
+    renderDeep(p);
   }else{
     const rows=state.log.slice(-100).reverse();
     p.innerHTML=`<div class="row" style="margin:0 0 8px"><button id="csvBtn">Export CSV</button><button id="clrBtn">Clear log</button></div>`+
@@ -313,12 +386,88 @@ function exportCSV(){
   a.download='arb-log.csv';a.click();
 }
 
+// ---------- deep check ----------
+state.deep=[];state.deepAt=null;state.deepBusy=false;
+const detailUrls={
+  binance:{book:s=>`https://api.binance.com/api/v3/depth?symbol=${s}USDT&limit=50`,trades:s=>`https://api.binance.com/api/v3/trades?symbol=${s}USDT&limit=20`},
+  kucoin:{book:s=>`https://api.kucoin.com/api/v1/market/orderbook/level2_20?symbol=${s}-USDT`,trades:s=>`https://api.kucoin.com/api/v1/market/histories?symbol=${s}-USDT`},
+  bybit:{book:s=>`https://api.bybit.com/v5/market/orderbook?category=spot&symbol=${s}USDT&limit=50`,trades:s=>`https://api.bybit.com/v5/market/recent-trade?category=spot&symbol=${s}USDT&limit=20`},
+  okx:{book:s=>`https://www.okx.com/api/v5/market/books?instId=${s}-USDT&sz=20`,trades:s=>`https://www.okx.com/api/v5/market/trades?instId=${s}-USDT&limit=20`}
+};
+const detailCache={},routeMemo={};
+async function getDetail(ex,base,kind){
+  const key=ex+'|'+base+'|'+kind,c=detailCache[key];
+  if(c&&Date.now()-c.t<15000)return c.v;
+  const routes=[['direct',detailUrls[ex][kind](base)]];
+  if(location.protocol.startsWith('http'))routes.push(['own proxy','/.netlify/functions/ticker?ex='+ex+'&kind='+kind+'&sym='+encodeURIComponent(base)]);
+  if(routeMemo[ex]==='own proxy')routes.reverse();
+  let err;
+  for(const[label,u]of routes){
+    try{const d=await getJSON(u,8000);routeMemo[ex]=label;detailCache[key]={t:Date.now(),v:d};return d;}
+    catch(e){err=e;}
+  }
+  throw err;
+}
+async function pool(items,n,fn){
+  let i=0;
+  await Promise.all(Array.from({length:Math.min(n,items.length)},async()=>{while(i<items.length){const k=i++;await fn(items[k]);}}));
+}
+const rankV=r=>({REAL:3,SMALL:2,NO:1,STALE:0,ERR:-1}[r.verdict]*1e6)+(r.best?r.best.profit:0);
+async function deepCheck(){
+  if(state.deepBusy)return;
+  state.deepBusy=true;$('deepBtn').textContent='Checking…';
+  try{
+    if(!state.cross.length){state.busy=false;await scan();}
+    if(!state.cross.length){$('banner').style.display='block';$('banner').textContent='Nothing to deep-check yet. Run a scan with at least 2 exchanges ticked.';return;}
+    const S=settings(),N=+$('deepN').value||10;
+    const cands=state.cross.slice(0,N);
+    const jobs=new Map();
+    cands.forEach(r=>['book','trades'].forEach(k=>{[r.buy,r.sell].forEach(ex=>jobs.set(ex+'|'+r.base+'|'+k,{ex,base:r.base,kind:k}));}));
+    const res={};
+    await pool([...jobs.values()],6,async j=>{
+      const key=j.ex+'|'+j.base+'|'+j.kind;
+      try{const d=await getDetail(j.ex,j.base,j.kind);res[key]=j.kind==='book'?normBook(j.ex,d):normTrades(j.ex,d);}
+      catch(e){res[key]={error:e.name==='AbortError'?'timeout':(e.message||'error')};}
+    });
+    const now=Date.now();
+    state.deep=cands.map(r=>{
+      const g=(ex,k)=>res[ex+'|'+r.base+'|'+k];
+      const bb=g(r.buy,'book'),sb=g(r.sell,'book'),bt=g(r.buy,'trades'),st=g(r.sell,'trades');
+      const bad=[bb,sb].find(x=>!x||x.error||!x.asks||!x.bids||!x.asks.length||!x.bids.length);
+      if(bad)return{row:r,verdict:'ERR',err:(bad&&bad.error)||'empty book'};
+      return{row:r,...verifyRow(bb,sb,bt&&bt.error?null:bt,st&&st.error?null:st,S.size,S.fee,S.transfer,now)};
+    }).sort((a,b)=>rankV(b)-rankV(a));
+    state.deepAt=new Date();state.deepSize=S.size;
+    document.querySelector('.tabs button[data-tab="deep"]').click();
+  }finally{state.deepBusy=false;$('deepBtn').textContent='Deep check';}
+}
+const fmtAge=s=>s===null?'none':s<90?Math.round(s)+'s':s<5400?Math.round(s/60)+'m':(s/3600).toFixed(1)+'h';
+function renderDeep(p){
+  const rows=state.deep;
+  if(!rows.length){p.innerHTML='<div class="mut">Press <b>Deep check</b>. It fetches the order books and recent trades for the top cross-exchange candidates and re-prices them at your trade size.</div>';return;}
+  const vc={REAL:'pos',SMALL:'warn',STALE:'neg',NO:'neg',ERR:'neg'};
+  const cnt=v=>rows.filter(r=>r.verdict===v).length;
+  const tAge=t=>fmtAge(t.age)+(t.dev!==null&&t.dev>0.003?' ('+(t.dev*100).toFixed(1)+'% off)':'');
+  p.innerHTML=`<div class="note" style="margin:0 0 8px">${cnt('REAL')} real · ${cnt('SMALL')} small-size only · ${cnt('STALE')} stale · ${cnt('NO')} no · ${cnt('ERR')} error — checked ${state.deepAt?state.deepAt.toLocaleTimeString():''} at $${state.deepSize}</div>`+
+  `<div class="wrap"><table><thead><tr><th>Coin</th><th>Route</th><th class="n">Quoted net</th><th class="n">Real net</th><th class="n">Best size → profit</th><th class="n">Last trade (buy / sell)</th><th>Verdict</th></tr></thead><tbody>${
+    rows.map(r=>{
+      const q=r.row;
+      if(r.verdict==='ERR')return`<tr><td>${esc(q.base)}</td><td>${esc(q.buy)} → ${esc(q.sell)}</td><td class="n">${pct(q.net)}</td><td class="n mut">-</td><td class="n mut">-</td><td class="n mut">-</td><td class="neg" title="${esc(r.err)}">ERROR: ${esc(String(r.err).slice(0,40))}</td></tr>`;
+      const a=r.atSize;
+      const real=a.ok?`<span class="${cls(a.net)}">${pct(a.net)}</span>`:`<span class="warn">book too thin${a.fillable?' (~'+usd(a.fillable)+')':''}</span>`;
+      const best=r.best?`$${r.best.size} → <span class="pos">${usd(r.best.profit)}</span>`:'<span class="mut">none</span>';
+      return`<tr><td>${esc(q.base)}</td><td>${esc(q.buy)} → ${esc(q.sell)}</td><td class="n">${pct(q.net)}</td><td class="n">${real}</td><td class="n">${best}</td><td class="n ${r.buyT.stale||r.sellT.stale?'neg':''}">${tAge(r.buyT)} / ${tAge(r.sellT)}</td><td class="${vc[r.verdict]}"><b>${r.verdict}</b></td></tr>`;
+    }).join('')
+  }</tbody></table></div><div class="note"><b>Real net</b> walks the live order book at your trade size (fees + transfer cost included). <b>Best size</b> is the grid size (25 to 10,000 USDT) with the highest profit that both books can fill. <b>STALE</b> = last trade over 5 min old or over 1% from the book. <b>SMALL</b> = only profitable at a smaller size. Snapshot only: books move in milliseconds.</div>`;
+}
+
 // ---------- wiring ----------
 document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>{
   document.querySelectorAll('.tabs button').forEach(x=>x.classList.remove('act'));
   b.classList.add('act');state.tab=b.dataset.tab;render();
 });
 $('scanBtn').onclick=scan;
+$('deepBtn').onclick=deepCheck;
 function setAuto(on){
   clearInterval(state.timer);state.timer=null;
   $('autoBtn').textContent='Auto: '+(on?'on':'off');
