@@ -8,7 +8,8 @@ import { CFG, emptyState, selectCandidates, stepSim } from "../lib/sim.mjs";
 export default async () => {
   const now = Date.now();
   const store = getStore({ name: "arb-sim", consistency: "strong" });
-  const state = (await store.get("state", { type: "json" })) || emptyState(now);
+  let state = await store.get("state", { type: "json" });
+  if (!state || state.epoch !== CFG.epoch) state = emptyState(now);
 
   const results = await Promise.allSettled(CFG.exchanges.map((ex) => fetchTickers(ex)));
   const books = {}, exErr = {};

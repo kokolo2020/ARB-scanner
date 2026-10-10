@@ -4,6 +4,7 @@
 import { verifyRow } from "./core.mjs";
 
 export const CFG = {
+  epoch: 2,             // bump to wipe saved state on next run
   exchanges: ["kucoin", "bybit", "okx"],
   size: 250,            // USDT per paper trade
   fee: 0.001,           // taker fee per side (0.1%)
@@ -20,7 +21,7 @@ export const CFG = {
 
 export function emptyState(now) {
   return {
-    version: 1, startedAt: now, lastRun: null, runs: 0, cfg: CFG,
+    version: 1, epoch: CFG.epoch, startedAt: now, lastRun: null, runs: 0, cfg: CFG,
     exStatus: {}, trades: [], tradeCount: 0, profit: 0, volume: 0,
     byCoin: {}, watch: {}, inv: {}, lastPx: {}, cooldown: {}, open: {}, lifetimes: [], hours: {},
   };
