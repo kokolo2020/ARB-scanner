@@ -1,7 +1,8 @@
 // Tiny read-only proxy for public exchange ticker data.
 // Whitelisted URLs only, so it cannot be used as an open proxy.
-// Served at /.netlify/functions/ticker?ex=kucoin|okx|binance (same origin as the page).
+// Served at /.netlify/functions/ticker?ex=kucoin|bybit|okx|binance (same origin as the page).
 const URLS = {
+  bybit: "https://api.bybit.com/v5/market/tickers?category=spot",
   binance: "https://data-api.binance.vision/api/v3/ticker/bookTicker",
   kucoin: "https://api.kucoin.com/api/v1/market/allTickers",
   okx: "https://www.okx.com/api/v5/market/tickers?instType=SPOT",

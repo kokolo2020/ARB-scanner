@@ -42,7 +42,7 @@ td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
 </head>
 <body>
 <h1>Arb Scanner</h1>
-<div class="sub">Detection only. No API keys, no orders. Public top-of-book quotes from KuCoin, Binance and OKX.</div>
+<div class="sub">Detection only. No API keys, no orders. Public top-of-book quotes from KuCoin, Bybit, OKX (and Binance, optional).</div>
 
 <div id="banner" class="banner"></div>
 
@@ -59,6 +59,13 @@ td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
     <label>Ignore spread above (%)<input id="cap" type="number" value="10" step="1" min="0.1" inputmode="decimal"></label>
     <label>Triangle start<select id="start"><option>USDT</option><option>USDC</option></select></label>
     <label>Auto interval<select id="interval"><option value="5">5 s</option><option value="10" selected>10 s</option><option value="30">30 s</option><option value="60">60 s</option></select></label>
+  </div>
+  <div class="row" id="exRow" style="align-items:center;gap:14px">
+    <span class="mut" style="font-size:11px">Exchanges</span>
+    <label style="flex-direction:row;align-items:center;gap:5px;font-size:13px;color:var(--text)"><input type="checkbox" data-ex="kucoin" checked style="padding:0"> KuCoin</label>
+    <label style="flex-direction:row;align-items:center;gap:5px;font-size:13px;color:var(--text)"><input type="checkbox" data-ex="bybit" checked style="padding:0"> Bybit</label>
+    <label style="flex-direction:row;align-items:center;gap:5px;font-size:13px;color:var(--text)"><input type="checkbox" data-ex="okx" checked style="padding:0"> OKX</label>
+    <label style="flex-direction:row;align-items:center;gap:5px;font-size:13px;color:var(--text)"><input type="checkbox" data-ex="binance" style="padding:0"> Binance</label>
   </div>
   <div class="row">
     <button id="scanBtn">Scan now</button>
@@ -96,6 +103,7 @@ function mk(base,quote,bid,ask,bq,aq){bid=num(bid);ask=num(ask);if(!base||!bid||
 const parsers={
   binance(data){const out=[];for(const t of data){const p=splitSymbol(t.symbol);if(!p)continue;const m=mk(p.base,p.quote,t.bidPrice,t.askPrice,t.bidQty,t.askQty);if(m)out.push(m);}return out;},
   kucoin(data){const out=[];for(const t of(data.data&&data.data.ticker)||[]){const[b,q]=String(t.symbol).split('-');const m=mk(b,q,t.buy,t.sell,null,null);if(m)out.push(m);}return out;},
+  bybit(data){const out=[];for(const t of(data.result&&data.result.list)||[]){const p=splitSymbol(String(t.symbol));if(!p)continue;const m=mk(p.base,p.quote,t.bid1Price,t.ask1Price,t.bid1Size,t.ask1Size);if(m)out.push(m);}return out;},
   okx(data){const out=[];for(const t of data.data||[]){const[b,q]=String(t.instId).split('-');const m=mk(b,q,t.bidPx,t.askPx,t.bidSz,t.askSz);if(m)out.push(m);}return out;}
 };
 
@@ -170,6 +178,7 @@ async function viaRoutes(ex,urls){
 }
 const sources={
   binance:async()=>{const r=await viaRoutes('binance',['https://api.binance.com/api/v3/ticker/bookTicker','https://data-api.binance.vision/api/v3/ticker/bookTicker']);return{rows:parsers.binance(r.d),label:r.label};},
+  bybit:async()=>{const r=await viaRoutes('bybit',['https://api.bybit.com/v5/market/tickers?category=spot','https://api.bytick.com/v5/market/tickers?category=spot']);if(r.d&&r.d.retCode!==undefined&&r.d.retCode!==0)throw new Error('Bybit: '+r.d.retMsg);return{rows:parsers.bybit(r.d),label:r.label};},
   kucoin:async()=>{const r=await viaRoutes('kucoin',['https://api.kucoin.com/api/v1/market/allTickers']);return{rows:parsers.kucoin(r.d),label:r.label};},
   okx:async()=>{const r=await viaRoutes('okx',['https://www.okx.com/api/v5/market/tickers?instType=SPOT']);return{rows:parsers.okx(r.d),label:r.label};}
 };
@@ -183,7 +192,8 @@ const usd=x=>(x<0?'-':'')+'$'+Math.abs(x).toLocaleString(undefined,{maximumFract
 const cls=x=>x>0?'pos':'neg';
 function loadLog(){try{return JSON.parse(localStorage.getItem('arb_log_v1')||'[]');}catch(e){return[];}}
 function saveLog(l){try{localStorage.setItem('arb_log_v1',JSON.stringify(l));}catch(e){}}
-const state={scans:0,hitScans:0,best:null,seen:{},log:loadLog(),tab:'tri',tri:[],cross:[],dropped:0,busy:false,timer:null,names:['kucoin','binance','okx']};
+const state={scans:0,hitScans:0,best:null,seen:{},log:loadLog(),tab:'tri',tri:[],cross:[],dropped:0,busy:false,timer:null,names:['kucoin','bybit','okx','binance']};
+function enabledNames(){const on=[...document.querySelectorAll('#exRow input[data-ex]:checked')].map(i=>i.dataset.ex);return state.names.filter(n=>on.includes(n));}
 
 function settings(){
   return{
@@ -197,7 +207,7 @@ function settings(){
 }
 
 function renderChips(info){
-  $('chips').innerHTML=state.names.map(n=>{
+  $('chips').innerHTML=enabledNames().map(n=>{
     const i=info[n];
     if(!i)return`<span class="chip">${n}: idle</span>`;
     return i.ok?`<span class="chip ok">${n}: ${i.count} pairs · ${i.ms} ms${i.label&&i.label!=='direct'?' · via '+esc(i.label):''}</span>`
@@ -205,16 +215,19 @@ function renderChips(info){
   }).join('');
 }
 renderChips({});
+document.querySelectorAll('#exRow input[data-ex]').forEach(i=>i.onchange=()=>renderChips({}));
 
 // ---------- scan ----------
 async function scan(){
   if(state.busy)return;
   state.busy=true;$('scanBtn').textContent='Scanning…';
   const S=settings();
-  const results=await Promise.allSettled(state.names.map(async n=>{const t=Date.now();const d=await sources[n]();return{d,ms:Date.now()-t};}));
+  const names=enabledNames();
+  if(!names.length){$('banner').style.display='block';$('banner').textContent='Tick at least one exchange.';state.busy=false;$('scanBtn').textContent='Scan now';return;}
+  const results=await Promise.allSettled(names.map(async n=>{const t=Date.now();const d=await sources[n]();return{d,ms:Date.now()-t};}));
   const books={},info={};
   results.forEach((r,i)=>{
-    const n=state.names[i];
+    const n=names[i];
     if(r.status==='fulfilled'){books[n]=r.value.d.rows;info[n]={ok:true,count:r.value.d.rows.length,ms:r.value.ms,label:r.value.d.label};}
     else info[n]={ok:false,err:(r.reason&&r.reason.message)||'error'};
   });
@@ -226,8 +239,8 @@ async function scan(){
     banner.textContent='No exchange responded. This is usually a network block, a VPN, or the exchange refusing browser (CORS) requests. Try the deployed https site instead of a local file, or tell me and I will add a small proxy function.';
     state.busy=false;$('scanBtn').textContent='Scan now';return;
   }
-  banner.style.display=okCount<3?'block':'none';
-  if(okCount<3)banner.textContent='Some exchanges failed. Results only cover the ones that responded (see chips above).';
+  banner.style.display=okCount<names.length?'block':'none';
+  if(okCount<names.length)banner.textContent='Some exchanges failed. Results only cover the ones that responded (see chips above).';
 
   let tri=[];
   for(const ex in books){
