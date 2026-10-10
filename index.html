@@ -33,6 +33,7 @@ table{border-collapse:collapse;width:100%;min-width:640px}
 th,td{padding:6px 8px;border-bottom:1px solid var(--line);text-align:left;white-space:nowrap;font-size:13px}
 th{color:var(--mut);font-weight:500;font-size:11px;text-transform:uppercase}
 td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
+h4{margin:14px 0 6px;font-size:14px}
 .pos{color:var(--good)}.neg{color:var(--bad)}.mut{color:var(--mut)}
 .legs{white-space:normal;font-size:11px;color:var(--mut);min-width:220px}
 .note{font-size:12px;color:var(--mut);margin-top:6px}
@@ -90,6 +91,7 @@ td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
   <button data-tab="tri" class="act">Triangular</button>
   <button data-tab="cross">Cross-exchange</button>
   <button data-tab="deep">Verified</button>
+  <button data-tab="sim">Simulation</button>
   <button data-tab="log">Log</button>
 </div>
 
@@ -367,6 +369,8 @@ function render(){
     :'<div class="mut">No data yet. Press Scan now.</div>';
   }else if(state.tab==='deep'){
     renderDeep(p);
+  }else if(state.tab==='sim'){
+    renderSim(p);
   }else{
     const rows=state.log.slice(-100).reverse();
     p.innerHTML=`<div class="row" style="margin:0 0 8px"><button id="csvBtn">Export CSV</button><button id="clrBtn">Clear log</button></div>`+
@@ -459,6 +463,45 @@ function renderDeep(p){
       return`<tr><td>${esc(q.base)}</td><td>${esc(q.buy)} → ${esc(q.sell)}</td><td class="n">${pct(q.net)}</td><td class="n">${real}</td><td class="n">${best}</td><td class="n ${r.buyT.stale||r.sellT.stale?'neg':''}">${tAge(r.buyT)} / ${tAge(r.sellT)}</td><td class="${vc[r.verdict]}"><b>${r.verdict}</b></td></tr>`;
     }).join('')
   }</tbody></table></div><div class="note"><b>Real net</b> walks the live order book at your trade size (fees + transfer cost included). <b>Best size</b> is the grid size (25 to 10,000 USDT) with the highest profit that both books can fill. <b>STALE</b> = last trade over 5 min old or over 1% from the book. <b>SMALL</b> = only profitable at a smaller size. Snapshot only: books move in milliseconds.</div>`;
+}
+
+// ---------- simulation (server-side paper trading) ----------
+state.sim=null;state.simErr=null;state.simLoading=false;
+async function loadSim(){
+  state.simLoading=true;state.simErr=null;if(state.tab==='sim')render();
+  try{
+    const r=await fetch('/.netlify/functions/sim-data',{cache:'no-store'});
+    if(!r.ok)throw new Error('HTTP '+r.status);
+    state.sim=await r.json();
+  }catch(e){state.simErr=String(e.message||e);}
+  state.simLoading=false;if(state.tab==='sim')render();
+}
+function renderSim(p){
+  const btn='<div class="row" style="margin:0 0 8px"><button id="simBtn">'+(state.simLoading?'Loading...':'Refresh')+'</button></div>';
+  const wire=()=>{$('simBtn').onclick=loadSim;};
+  if(!state.sim&&!state.simErr&&!state.simLoading){loadSim();}
+  if(state.simErr){p.innerHTML=btn+'<div class="mut">Could not load simulation: '+esc(state.simErr)+'. It only works on the deployed site, and only after the first scheduled run (about a minute after deploy).</div>';wire();return;}
+  const s=state.sim;
+  if(!s){p.innerHTML=btn+'<div class="mut">Loading...</div>';wire();return;}
+  if(s.empty){p.innerHTML=btn+'<div class="mut">No data yet. The simulator runs every minute on the server; check back in a few minutes.</div>';wire();return;}
+  const days=Math.max((s.lastRun-s.startedAt)/864e5,1/1440);
+  const stat=(v,l)=>`<div class="stat"><b>${v}</b><span>${l}</span></div>`;
+  const ex=Object.entries(s.exStatus).map(([k,v])=>{
+    const tot=v.ok+v.fail;const okp=tot?Math.round(100*v.ok/tot):0;
+    return `<tr><td>${esc(k)}</td><td class="n ${okp>=90?'pos':'neg'}">${okp}%</td><td class="n">${v.ok}</td><td class="n">${v.fail}</td><td>${esc(v.lastErr||'')}</td></tr>`;}).join('');
+  const dayRows=Object.entries(s.days).sort().reverse().map(([d,v])=>`<tr><td>${esc(d)}</td><td class="n">${v.runs}</td><td class="n">${v.real}</td><td class="n">${v.small}</td><td class="n">${v.stale}</td><td class="n">${v.no}</td><td class="n">${v.err}</td><td class="n">${v.trades}</td><td class="n ${cls(v.profit)}">${usd(v.profit)}</td></tr>`).join('');
+  const coinRows=s.byCoin.map(c=>`<tr><td>${esc(c.coin)}</td><td class="n">${c.n}</td><td class="n">${usd(c.vol)}</td><td class="n ${cls(c.profit)}">${usd(c.profit)}</td></tr>`).join('');
+  const tradeRows=s.trades.map(t=>`<tr><td>${esc(new Date(t.t).toLocaleString())}</td><td>${esc(t.coin)}</td><td>${esc(t.buy)} → ${esc(t.sell)}</td><td class="n">${px(t.buyAvg)}</td><td class="n">${px(t.sellAvg)}</td><td class="n">${pct(t.net)}</td><td class="n ${cls(t.profit)}">${usd(t.profit)}</td></tr>`).join('');
+  const L=s.lifetimes,c=s.cfg;
+  p.innerHTML=btn+
+  `<div class="stats">${stat(usd(s.profit),'Paper profit (after fees)')}${stat(usd(s.netAfterRebalance),'After est. rebalancing')}${stat(s.tradeCount,'Paper trades')}${stat(usd(s.volume),'Volume traded')}${stat(usd(s.profit/days),'Profit per day')}${stat(s.openNow,'Gaps open now')}</div>`+
+  `<div class="note">Running ${days.toFixed(2)} days (${s.runs} runs), last run ${esc(new Date(s.lastRun).toLocaleTimeString())}. Each trade = buy on one exchange and sell on the other at the same moment, $${c.size} per trade, ${(c.fee*100).toFixed(2)}% fee per side, no transfer cost (money pre-positioned). Rebalancing = moving coins back later; assumed ${(c.rebalancePct*100).toFixed(2)}% of ${usd(s.rebalanceMoved)} moved = ${usd(s.rebalanceCost)}. Paper only: no orders, no keys.</div>`+
+  `<h4>Exchange reachability</h4><div class="wrap"><table><thead><tr><th>Exchange</th><th class="n">Success</th><th class="n">OK</th><th class="n">Failed</th><th>Last error</th></tr></thead><tbody>${ex}</tbody></table></div>`+
+  `<h4>By day (candidates checked, by verdict)</h4><div class="wrap"><table><thead><tr><th>Day (UTC)</th><th class="n">Runs</th><th class="n">REAL</th><th class="n">SMALL</th><th class="n">STALE</th><th class="n">NO</th><th class="n">Error</th><th class="n">Trades</th><th class="n">Profit</th></tr></thead><tbody>${dayRows}</tbody></table></div>`+
+  `<h4>Gap lifetimes</h4><div class="note">${L.count} gaps ended. Median lasted ${L.median===null?'-':L.median} minute-checks, longest ${L.max===null?'-':L.max}, ${L.over5} lasted 5+. If most last 1-2 checks, a human or slow bot cannot catch them.</div>`+
+  `<h4>By coin (top 10)</h4>${coinRows?`<div class="wrap"><table><thead><tr><th>Coin</th><th class="n">Trades</th><th class="n">Volume</th><th class="n">Profit</th></tr></thead><tbody>${coinRows}</tbody></table></div>`:'<div class="mut">No trades yet.</div>'}`+
+  `<h4>Recent paper trades</h4>${tradeRows?`<div class="wrap"><table><thead><tr><th>Time</th><th>Coin</th><th>Route</th><th class="n">Buy avg</th><th class="n">Sell avg</th><th class="n">Net</th><th class="n">Profit</th></tr></thead><tbody>${tradeRows}</tbody></table></div>`:'<div class="mut">No trades yet. That is a valid result: it means no verified, liquid, fresh gap appeared.</div>'}`;
+  wire();
 }
 
 // ---------- wiring ----------
