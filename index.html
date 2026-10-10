@@ -1,0 +1,320 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Arb Scanner</title>
+<style>
+:root{--bg:#0b0f14;--card:#131a22;--line:#223040;--text:#e6edf3;--mut:#8b9bab;--good:#2ecc71;--bad:#ff6b6b;--warn:#f5b942;--acc:#4ea1ff}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;padding:12px 12px 40px;max-width:1100px;margin-inline:auto}
+h1{font-size:18px;margin:4px 0 2px}
+.sub{color:var(--mut);font-size:12px;margin-bottom:12px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px;margin-bottom:10px}
+.chips{display:flex;gap:6px;flex-wrap:wrap}
+.chip{font-size:12px;padding:4px 8px;border-radius:999px;border:1px solid var(--line);color:var(--mut)}
+.chip.ok{color:var(--good);border-color:#1f5e3a}
+.chip.err{color:var(--bad);border-color:#6b2a2a}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px}
+label{display:flex;flex-direction:column;font-size:11px;color:var(--mut);gap:3px}
+input,select,button{font:inherit;color:var(--text);background:#0e141b;border:1px solid var(--line);border-radius:8px;padding:8px}
+button{cursor:pointer;background:#173049;border-color:#27506f}
+button.on{background:#1d4d33;border-color:#2b7a4d}
+button:active{opacity:.8}
+.row{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px}
+.stat{background:#0e141b;border:1px solid var(--line);border-radius:8px;padding:8px}
+.stat b{display:block;font-size:17px}
+.stat span{font-size:11px;color:var(--mut)}
+.tabs{display:flex;gap:6px;margin-bottom:8px}
+.tabs button.act{background:var(--acc);color:#04121f;border-color:var(--acc);font-weight:600}
+.wrap{overflow-x:auto}
+table{border-collapse:collapse;width:100%;min-width:640px}
+th,td{padding:6px 8px;border-bottom:1px solid var(--line);text-align:left;white-space:nowrap;font-size:13px}
+th{color:var(--mut);font-weight:500;font-size:11px;text-transform:uppercase}
+td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
+.pos{color:var(--good)}.neg{color:var(--bad)}.mut{color:var(--mut)}
+.legs{white-space:normal;font-size:11px;color:var(--mut);min-width:220px}
+.note{font-size:12px;color:var(--mut);margin-top:6px}
+.banner{background:#3a1f1f;border:1px solid #6b2a2a;color:#ffb3b3;padding:8px;border-radius:8px;margin-bottom:10px;font-size:13px;display:none}
+.warn{color:var(--warn)}
+</style>
+</head>
+<body>
+<h1>Arb Scanner</h1>
+<div class="sub">Detection only. No API keys, no orders. Public top-of-book quotes from KuCoin, Binance and OKX.</div>
+
+<div id="banner" class="banner"></div>
+
+<div class="card">
+  <div class="chips" id="chips"></div>
+</div>
+
+<div class="card">
+  <div class="grid">
+    <label>Trade size (USDT)<input id="size" type="number" value="1000" min="1" inputmode="decimal"></label>
+    <label>Fee per trade (%)<input id="fee" type="number" value="0.10" step="0.01" min="0" inputmode="decimal"></label>
+    <label>Transfer cost (USDT)<input id="transfer" type="number" value="1" step="0.1" min="0" inputmode="decimal"></label>
+    <label>Min net to log (%)<input id="minNet" type="number" value="0" step="0.01" inputmode="decimal"></label>
+    <label>Ignore spread above (%)<input id="cap" type="number" value="10" step="1" min="0.1" inputmode="decimal"></label>
+    <label>Triangle start<select id="start"><option>USDT</option><option>USDC</option></select></label>
+    <label>Auto interval<select id="interval"><option value="5">5 s</option><option value="10" selected>10 s</option><option value="30">30 s</option><option value="60">60 s</option></select></label>
+  </div>
+  <div class="row">
+    <button id="scanBtn">Scan now</button>
+    <button id="autoBtn">Auto: off</button>
+  </div>
+  <div class="note">Net % = after fees on every leg (and transfer cost for cross-exchange). Cross-exchange assumes you hold funds on both exchanges or accept transfer delay.</div>
+</div>
+
+<div class="card">
+  <div class="stats">
+    <div class="stat"><b id="sScans">0</b><span>Scans</span></div>
+    <div class="stat"><b id="sHit">0</b><span>Scans with net-positive</span></div>
+    <div class="stat"><b id="sNow">0</b><span>Net-positive now</span></div>
+    <div class="stat"><b id="sBest">-</b><span>Best net seen</span></div>
+    <div class="stat"><b id="sLast">-</b><span>Last scan</span></div>
+  </div>
+</div>
+
+<div class="tabs">
+  <button data-tab="tri" class="act">Triangular</button>
+  <button data-tab="cross">Cross-exchange</button>
+  <button data-tab="log">Log</button>
+</div>
+
+<div class="card" id="panel"></div>
+
+<div class="note">Quotes are top-of-book snapshots. Real fills have slippage, and opportunities seen in only 1 scan are usually stale quotes. "Seen" counts consecutive scans an opportunity stayed net-positive. KuCoin does not publish book size in this feed, so liquidity can show as unknown.</div>
+
+<script>
+// ===CORE START===
+const QUOTES=['USDT','USDC','BTC','ETH'];
+function splitSymbol(s){for(const q of QUOTES){if(s.endsWith(q)&&s.length>q.length)return{base:s.slice(0,-q.length),quote:q};}return null;}
+function num(x){const n=parseFloat(x);return isFinite(n)&&n>0?n:null;}
+function mk(base,quote,bid,ask,bq,aq){bid=num(bid);ask=num(ask);if(!base||!bid||!ask||!QUOTES.includes(quote))return null;return{base,quote,bid,ask,bidQty:num(bq),askQty:num(aq)};}
+const parsers={
+  binance(data){const out=[];for(const t of data){const p=splitSymbol(t.symbol);if(!p)continue;const m=mk(p.base,p.quote,t.bidPrice,t.askPrice,t.bidQty,t.askQty);if(m)out.push(m);}return out;},
+  kucoin(data){const out=[];for(const t of(data.data&&data.data.ticker)||[]){const[b,q]=String(t.symbol).split('-');const m=mk(b,q,t.buy,t.sell,null,null);if(m)out.push(m);}return out;},
+  okx(data){const out=[];for(const t of data.data||[]){const[b,q]=String(t.instId).split('-');const m=mk(b,q,t.bidPx,t.askPx,t.bidSz,t.askSz);if(m)out.push(m);}return out;}
+};
+
+function triangular(markets,start,fee,cap){
+  const g={};
+  const add=(from,e)=>{(g[from]||(g[from]=[])).push(e);};
+  for(const m of markets){
+    const sym=m.base+'/'+m.quote;
+    add(m.quote,{to:m.base,rate:1/m.ask,sym,act:'BUY',price:m.ask});
+    add(m.base,{to:m.quote,rate:m.bid,sym,act:'SELL',price:m.bid});
+  }
+  const f=1-fee,res=[];
+  for(const e1 of g[start]||[]){
+    const A=e1.to;if(A===start)continue;
+    for(const e2 of g[A]||[]){
+      const B=e2.to;if(B===start||B===A)continue;
+      for(const e3 of g[B]||[]){
+        if(e3.to!==start)continue;
+        const gross=e1.rate*e2.rate*e3.rate-1;
+        if(gross>cap)continue;
+        const net=(1+gross)*f*f*f-1;
+        res.push({key:start+'>'+A+'>'+B,path:start+'→'+A+'→'+B+'→'+start,legs:[e1,e2,e3],gross,net});
+      }
+    }
+  }
+  return res;
+}
+
+function cross(books,size,fee,transfer,cap){
+  const by={};
+  for(const ex in books)for(const m of books[ex]){if(m.quote!=='USDT')continue;(by[m.base]||(by[m.base]={}))[ex]=m;}
+  const rows=[];let dropped=0;
+  for(const base in by){
+    const exs=Object.keys(by[base]);if(exs.length<2)continue;
+    for(const buy of exs)for(const sell of exs){
+      if(buy===sell)continue;
+      const a=by[base][buy],b=by[base][sell];
+      const gross=b.bid/a.ask-1;
+      if(gross>cap){dropped++;continue;}
+      const qty=size*(1-fee)/a.ask;
+      const profit=qty*b.bid*(1-fee)-size-transfer;
+      const net=profit/size;
+      const lb=a.askQty?a.askQty*a.ask:null,ls=b.bidQty?b.bidQty*b.bid:null;
+      const known=[lb,ls].filter(x=>x!==null);
+      rows.push({key:base+':'+buy+'>'+sell,base,buy,sell,buyPx:a.ask,sellPx:b.bid,gross,net,profit,
+        liq:known.length?Math.min(...known):null,liqPartial:known.length===1});
+    }
+  }
+  return{rows,dropped};
+}
+// ===CORE END===
+
+// ---------- data sources ----------
+async function getJSON(url,ms=9000){
+  const c=new AbortController();const t=setTimeout(()=>c.abort(),ms);
+  try{const r=await fetch(url,{signal:c.signal});if(!r.ok)throw new Error('HTTP '+r.status);return await r.json();}
+  finally{clearTimeout(t);}
+}
+// Tries, in order: direct → our own Netlify proxy function → public CORS proxies.
+// Only public market prices are fetched, nothing private goes through any proxy.
+async function viaRoutes(ex,urls){
+  const routes=urls.map(u=>['direct',u]);
+  if(location.protocol.startsWith('http'))routes.push(['own proxy','/.netlify/functions/ticker?ex='+ex]);
+  routes.push(['public proxy 1','https://corsproxy.io/?url='+encodeURIComponent(urls[0])]);
+  routes.push(['public proxy 2','https://api.allorigins.win/raw?url='+encodeURIComponent(urls[0])]);
+  const errs=[];
+  for(const[label,u]of routes){
+    try{return{d:await getJSON(u),label};}
+    catch(e){errs.push(label+': '+(e.name==='AbortError'?'timeout':e.message));}
+  }
+  throw new Error(errs.join(' | '));
+}
+const sources={
+  binance:async()=>{const r=await viaRoutes('binance',['https://api.binance.com/api/v3/ticker/bookTicker','https://data-api.binance.vision/api/v3/ticker/bookTicker']);return{rows:parsers.binance(r.d),label:r.label};},
+  kucoin:async()=>{const r=await viaRoutes('kucoin',['https://api.kucoin.com/api/v1/market/allTickers']);return{rows:parsers.kucoin(r.d),label:r.label};},
+  okx:async()=>{const r=await viaRoutes('okx',['https://www.okx.com/api/v5/market/tickers?instType=SPOT']);return{rows:parsers.okx(r.d),label:r.label};}
+};
+
+// ---------- state / helpers ----------
+const $=id=>document.getElementById(id);
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const pct=x=>(x*100).toFixed(3)+'%';
+const px=x=>{const s=Number(x).toPrecision(6);return s.includes('e')?s:String(parseFloat(s));};
+const usd=x=>(x<0?'-':'')+'$'+Math.abs(x).toLocaleString(undefined,{maximumFractionDigits:2});
+const cls=x=>x>0?'pos':'neg';
+function loadLog(){try{return JSON.parse(localStorage.getItem('arb_log_v1')||'[]');}catch(e){return[];}}
+function saveLog(l){try{localStorage.setItem('arb_log_v1',JSON.stringify(l));}catch(e){}}
+const state={scans:0,hitScans:0,best:null,seen:{},log:loadLog(),tab:'tri',tri:[],cross:[],dropped:0,busy:false,timer:null,names:['kucoin','binance','okx']};
+
+function settings(){
+  return{
+    size:Math.max(1,+$('size').value||1000),
+    fee:Math.max(0,(+$('fee').value||0)/100),
+    transfer:Math.max(0,+$('transfer').value||0),
+    minNet:(+$('minNet').value||0)/100,
+    cap:Math.max(0.1,+$('cap').value||10)/100,
+    start:$('start').value
+  };
+}
+
+function renderChips(info){
+  $('chips').innerHTML=state.names.map(n=>{
+    const i=info[n];
+    if(!i)return`<span class="chip">${n}: idle</span>`;
+    return i.ok?`<span class="chip ok">${n}: ${i.count} pairs · ${i.ms} ms${i.label&&i.label!=='direct'?' · via '+esc(i.label):''}</span>`
+               :`<span class="chip err" style="white-space:normal;font-size:11px">${n}: failed (${esc(String(i.err||'error').slice(0,220))})</span>`;
+  }).join('');
+}
+renderChips({});
+
+// ---------- scan ----------
+async function scan(){
+  if(state.busy)return;
+  state.busy=true;$('scanBtn').textContent='Scanning…';
+  const S=settings();
+  const results=await Promise.allSettled(state.names.map(async n=>{const t=Date.now();const d=await sources[n]();return{d,ms:Date.now()-t};}));
+  const books={},info={};
+  results.forEach((r,i)=>{
+    const n=state.names[i];
+    if(r.status==='fulfilled'){books[n]=r.value.d.rows;info[n]={ok:true,count:r.value.d.rows.length,ms:r.value.ms,label:r.value.d.label};}
+    else info[n]={ok:false,err:(r.reason&&r.reason.message)||'error'};
+  });
+  renderChips(info);
+  const okCount=Object.keys(books).length;
+  const banner=$('banner');
+  if(okCount===0){
+    banner.style.display='block';
+    banner.textContent='No exchange responded. This is usually a network block, a VPN, or the exchange refusing browser (CORS) requests. Try the deployed https site instead of a local file, or tell me and I will add a small proxy function.';
+    state.busy=false;$('scanBtn').textContent='Scan now';return;
+  }
+  banner.style.display=okCount<3?'block':'none';
+  if(okCount<3)banner.textContent='Some exchanges failed. Results only cover the ones that responded (see chips above).';
+
+  let tri=[];
+  for(const ex in books){
+    for(const r of triangular(books[ex],S.start,S.fee,S.cap))tri.push({...r,ex,key:ex+':'+r.key,est:r.net*S.size});
+  }
+  const c=cross(books,S.size,S.fee,S.transfer,S.cap);
+  const cr=c.rows;
+  tri.sort((a,b)=>b.net-a.net);cr.sort((a,b)=>b.net-a.net);
+
+  const hits=[...tri,...cr].filter(r=>r.net>S.minNet);
+  const newSeen={};
+  hits.forEach(r=>{newSeen[r.key]=(state.seen[r.key]||0)+1;r.seen=newSeen[r.key];});
+  [...tri,...cr].forEach(r=>{if(r.seen===undefined)r.seen=0;});
+  state.seen=newSeen;
+
+  const now=new Date();
+  hits.filter(r=>r.seen===1).forEach(r=>{
+    state.log.push({t:now.toISOString(),type:r.legs?'tri':'cross',what:r.legs?(r.ex+' '+r.path):(r.base+' buy '+r.buy+' sell '+r.sell),net:r.net,est:r.legs?r.est:r.profit});
+  });
+  if(state.log.length>500)state.log=state.log.slice(-500);
+  saveLog(state.log);
+
+  state.scans++;
+  if(hits.length)state.hitScans++;
+  const top=[...tri,...cr].sort((a,b)=>b.net-a.net)[0];
+  if(top&&(!state.best||top.net>state.best.net))state.best={net:top.net,what:top.legs?top.ex+' '+top.path:top.base+' '+top.buy+'>'+top.sell};
+  state.tri=tri;state.cross=cr;state.dropped=c.dropped;
+
+  $('sScans').textContent=state.scans;
+  $('sHit').textContent=state.hitScans;
+  $('sNow').textContent=hits.length;
+  $('sBest').textContent=state.best?pct(state.best.net):'-';
+  $('sBest').className=state.best&&state.best.net>0?'pos':'';
+  $('sLast').textContent=now.toLocaleTimeString();
+  render();
+  state.busy=false;$('scanBtn').textContent='Scan now';
+}
+
+// ---------- render ----------
+function render(){
+  const p=$('panel');
+  if(state.tab==='tri'){
+    const rows=state.tri.slice(0,30);
+    p.innerHTML=rows.length?`<div class="wrap"><table><thead><tr><th>Exchange</th><th>Path</th><th>Legs</th><th class="n">Gross</th><th class="n">Net</th><th class="n">Est. P&amp;L</th><th class="n">Seen</th></tr></thead><tbody>${
+      rows.map(r=>`<tr><td>${esc(r.ex)}</td><td>${esc(r.path)}</td><td class="legs">${r.legs.map(l=>esc(l.act+' '+l.sym+' @'+px(l.price))).join('<br>')}</td><td class="n">${pct(r.gross)}</td><td class="n ${cls(r.net)}">${pct(r.net)}</td><td class="n ${cls(r.est)}">${usd(r.est)}</td><td class="n">${r.seen||'-'}</td></tr>`).join('')
+    }</tbody></table></div><div class="note">Top 30 of ${state.tri.length} triangles. Liquidity per leg is not checked here.</div>`
+    :'<div class="mut">No data yet. Press Scan now.</div>';
+  }else if(state.tab==='cross'){
+    const rows=state.cross.slice(0,30);
+    p.innerHTML=rows.length?`<div class="wrap"><table><thead><tr><th>Coin</th><th>Buy on</th><th>Sell on</th><th class="n">Buy px</th><th class="n">Sell px</th><th class="n">Gross</th><th class="n">Net</th><th class="n">Est. P&amp;L</th><th class="n">Top-of-book</th><th class="n">Seen</th></tr></thead><tbody>${
+      rows.map(r=>`<tr><td>${esc(r.base)}</td><td>${esc(r.buy)}</td><td>${esc(r.sell)}</td><td class="n">${px(r.buyPx)}</td><td class="n">${px(r.sellPx)}</td><td class="n">${pct(r.gross)}</td><td class="n ${cls(r.net)}">${pct(r.net)}</td><td class="n ${cls(r.profit)}">${usd(r.profit)}</td><td class="n ${r.liq!==null&&r.liq<settings().size?'warn':''}">${r.liq===null?'unknown':usd(r.liq)+(r.liqPartial?'*':'')}</td><td class="n">${r.seen||'-'}</td></tr>`).join('')
+    }</tbody></table></div><div class="note">Top 30 of ${state.cross.length} USDT pairs. * = only one side's size known. Orange = top-of-book smaller than your trade size. ${state.dropped} spreads above the ignore cap were dropped (usually delisted coins, stale quotes or same-ticker different tokens).</div>`
+    :'<div class="mut">No data yet. Press Scan now.</div>';
+  }else{
+    const rows=state.log.slice(-100).reverse();
+    p.innerHTML=`<div class="row" style="margin:0 0 8px"><button id="csvBtn">Export CSV</button><button id="clrBtn">Clear log</button></div>`+
+      (rows.length?`<div class="wrap"><table><thead><tr><th>Time</th><th>Type</th><th>Opportunity</th><th class="n">Net</th><th class="n">Est. P&amp;L</th></tr></thead><tbody>${
+        rows.map(r=>`<tr><td>${esc(new Date(r.t).toLocaleTimeString())}</td><td>${esc(r.type)}</td><td>${esc(r.what)}</td><td class="n ${cls(r.net)}">${pct(r.net)}</td><td class="n ${cls(r.est)}">${usd(r.est)}</td></tr>`).join('')
+      }</tbody></table></div><div class="note">Logs each net-positive opportunity the first time it appears. Last 100 shown, up to 500 kept in this browser.</div>`
+      :'<div class="mut">Nothing logged yet. If a long run logs nothing, that is the answer: fees are eating every spread.</div>');
+    $('csvBtn').onclick=exportCSV;
+    $('clrBtn').onclick=()=>{state.log=[];saveLog([]);render();};
+  }
+}
+function exportCSV(){
+  const q=s=>'"'+String(s).replace(/"/g,'""')+'"';
+  const lines=['time,type,opportunity,net_pct,est_pnl_usdt',...state.log.map(r=>[r.t,r.type,q(r.what),(r.net*100).toFixed(4),r.est.toFixed(4)].join(','))];
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([lines.join('\n')],{type:'text/csv'}));
+  a.download='arb-log.csv';a.click();
+}
+
+// ---------- wiring ----------
+document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('.tabs button').forEach(x=>x.classList.remove('act'));
+  b.classList.add('act');state.tab=b.dataset.tab;render();
+});
+$('scanBtn').onclick=scan;
+function setAuto(on){
+  clearInterval(state.timer);state.timer=null;
+  $('autoBtn').textContent='Auto: '+(on?'on':'off');
+  $('autoBtn').classList.toggle('on',on);
+  if(on){scan();state.timer=setInterval(scan,(+$('interval').value||10)*1000);}
+}
+$('autoBtn').onclick=()=>setAuto(!state.timer);
+$('interval').onchange=()=>{if(state.timer)setAuto(true);};
+render();
+</script>
+</body>
+</html>
