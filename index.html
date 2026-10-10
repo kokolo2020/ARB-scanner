@@ -401,12 +401,12 @@ async function getDetail(ex,base,kind){
   const routes=[['direct',detailUrls[ex][kind](base)]];
   if(location.protocol.startsWith('http'))routes.push(['own proxy','/.netlify/functions/ticker?ex='+ex+'&kind='+kind+'&sym='+encodeURIComponent(base)]);
   if(routeMemo[ex]==='own proxy')routes.reverse();
-  let err;
+  const errs=[];
   for(const[label,u]of routes){
     try{const d=await getJSON(u,8000);routeMemo[ex]=label;detailCache[key]={t:Date.now(),v:d};return d;}
-    catch(e){err=e;}
+    catch(e){errs.push(label+': '+(e.name==='AbortError'?'timeout':(e.message==='Failed to fetch'?'blocked/CORS':e.message)));}
   }
-  throw err;
+  throw new Error(errs.join(' | '));
 }
 async function pool(items,n,fn){
   let i=0;
@@ -452,7 +452,7 @@ function renderDeep(p){
   `<div class="wrap"><table><thead><tr><th>Coin</th><th>Route</th><th class="n">Quoted net</th><th class="n">Real net</th><th class="n">Best size → profit</th><th class="n">Last trade (buy / sell)</th><th>Verdict</th></tr></thead><tbody>${
     rows.map(r=>{
       const q=r.row;
-      if(r.verdict==='ERR')return`<tr><td>${esc(q.base)}</td><td>${esc(q.buy)} → ${esc(q.sell)}</td><td class="n">${pct(q.net)}</td><td class="n mut">-</td><td class="n mut">-</td><td class="n mut">-</td><td class="neg" title="${esc(r.err)}">ERROR: ${esc(String(r.err).slice(0,40))}</td></tr>`;
+      if(r.verdict==='ERR')return`<tr><td>${esc(q.base)}</td><td>${esc(q.buy)} → ${esc(q.sell)}</td><td class="n">${pct(q.net)}</td><td class="n mut">-</td><td class="n mut">-</td><td class="n mut">-</td><td class="neg" title="${esc(r.err)}"><span style="white-space:normal;font-size:11px">ERROR: ${esc(String(r.err).slice(0,110))}</span></td></tr>`;
       const a=r.atSize;
       const real=a.ok?`<span class="${cls(a.net)}">${pct(a.net)}</span>`:`<span class="warn">book too thin${a.fillable?' (~'+usd(a.fillable)+')':''}</span>`;
       const best=r.best?`$${r.best.size} → <span class="pos">${usd(r.best.profit)}</span>`:'<span class="mut">none</span>';
