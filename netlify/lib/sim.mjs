@@ -5,7 +5,7 @@ import { verifyRow } from "./core.mjs";
 
 export const CFG = {
   exchanges: ["kucoin", "bybit", "okx"],
-  size: 200,            // USDT per paper trade
+  size: 250,            // USDT per paper trade
   fee: 0.001,           // taker fee per side (0.1%)
   cap: 0.10,            // ignore gross spreads above 10% (almost always bad data)
   watch: ["OBT", "LUNC", "EGLD"], // if non-empty, simulate only these coins (every route, every minute)
