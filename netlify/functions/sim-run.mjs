@@ -32,6 +32,7 @@ export default async () => {
     catch (e) { details[key] = { error: e.message }; }
   }));
 
+  state.live = rows.filter((r) => CFG.watch.includes(r.base)).map((r) => ({ base: r.base, buy: r.buy, sell: r.sell, buyPx: r.buyPx, sellPx: r.sellPx, gross: r.gross, net: r.net, liq: r.liq }));
   stepSim(state, { candidates, details, exErr, exOk: Object.keys(books) }, now, CFG);
   await store.setJSON("state", state);
   return new Response("ok");

@@ -117,7 +117,7 @@ export function summarize(s) {
     startedAt: s.startedAt, lastRun: s.lastRun, runs: s.runs, cfg: s.cfg, exStatus: s.exStatus,
     tradeCount: s.tradeCount, profit: s.profit, volume: s.volume,
     rebalanceMoved: moved, rebalanceCost, netAfterRebalance: s.profit - rebalanceCost,
-    days, watch: s.watch || {},
+    days, watch: s.watch || {}, live: s.live || [],
     byCoin: Object.entries(s.byCoin).map(([coin, v]) => ({ coin, ...v })).sort((a, b) => b.profit - a.profit).slice(0, 10),
     trades: s.trades.slice(-20).reverse(),
     lifetimes: { count: life.length, median: life.length ? life[Math.floor(life.length / 2)] : null, max: life.length ? life[life.length - 1] : null, over5: life.filter((x) => x >= 5).length },
