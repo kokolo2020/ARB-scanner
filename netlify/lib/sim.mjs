@@ -47,6 +47,7 @@ export function stepSim(state, { candidates, details, exErr = {}, exOk = [] }, n
   const h = state.hours[hk] || (state.hours[hk] = blankHour());
   h.runs++;
   const seen = new Set();
+  const usedBuy = new Set(), usedSell = new Set(); // one fill per book side per run (no double-spending the same liquidity)
 
   for (const r of candidates) {
     const g = (ex, k) => details[ex + "|" + r.base + "|" + k];
@@ -71,6 +72,8 @@ export function stepSim(state, { candidates, details, exErr = {}, exOk = [] }, n
     if (v.verdict === "REAL") {
       const last = state.cooldown[key];
       if (last && now - last < cfg.cooldownMin * 60000) continue;
+      if (usedBuy.has(r.base + r.buy) || usedSell.has(r.base + r.sell)) continue;
+      usedBuy.add(r.base + r.buy); usedSell.add(r.base + r.sell);
       const a = v.atSize;
       const qty = cfg.size * (1 - cfg.fee) / a.buyAvg;
       state.trades.push({ t: now, coin: r.base, buy: r.buy, sell: r.sell, size: cfg.size, profit: a.profit, net: a.net, quotedNet: r.net, buyAvg: a.buyAvg, sellAvg: a.sellAvg, qty });
