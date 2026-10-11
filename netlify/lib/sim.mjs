@@ -4,12 +4,15 @@
 import { verifyRow } from "./core.mjs";
 
 export const CFG = {
-  epoch: 5,             // bump to wipe saved state on next run
+  epoch: 6,             // bump to wipe saved state on next run
   exchanges: ["kucoin", "okx", "mexc"],
   size: 250,            // USDT per paper trade
   fee: 0.001,           // taker fee per side (0.1%)
   cap: 0.10,            // ignore gross spreads above 10% (almost always bad data)
-  watch: ["LUNC"], // if non-empty, simulate only these coins (every route, every minute)
+  watch: [],            // if non-empty, simulate only these coins (empty = scan everything)
+  // Checked by hand 2026-10-11 and found not viable (3% tax, deposit suspended, thin books, ST tag...).
+  block: ["LUNC", "LRC", "MAT", "ALEX", "EGLD", "MGO", "NXT", "LINGO", "QI"],
+  minLiq: 100,          // book must hold at least this many USDT on both sides (real fill at ~$100)
   topN: 8,              // candidates deep-checked per minute
   minQuotedNet: 0,      // only deep-check candidates that look profitable on top-of-book
   cooldownMin: 15,      // don't re-trade the same coin+route within this many minutes
@@ -40,8 +43,13 @@ export function emptyState(now) {
 }
 
 export function selectCandidates(rows, cfg = CFG) {
+  const blocked = new Set(cfg.block || []);
+  rows = rows.filter((r) => !blocked.has(r.base));
   if (cfg.watch && cfg.watch.length) return rows.filter((r) => cfg.watch.includes(r.base));
-  return rows.filter((r) => r.net > cfg.minQuotedNet).sort((a, b) => b.net - a.net).slice(0, cfg.topN);
+  // quoted profit must also beat the real transfer cost, otherwise it can never be a real win
+  return rows
+    .filter((r) => r.net > cfg.minQuotedNet && r.net * cfg.size > transferCost(r.base, cfg.size, r.sellPx, cfg))
+    .sort((a, b) => b.net - a.net).slice(0, cfg.topN);
 }
 
 const blankHour = () => ({ runs: 0, real: 0, small: 0, stale: 0, no: 0, err: 0, trades: 0, profit: 0 });

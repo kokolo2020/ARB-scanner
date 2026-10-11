@@ -19,7 +19,7 @@ export default async () => {
     else exErr[ex] = (r.reason && r.reason.message) || "empty";
   });
 
-  const rows = Object.keys(books).length > 1 ? cross(books, CFG.size, CFG.fee, 0, CFG.cap).rows : [];
+  const rows = (Object.keys(books).length > 1 ? cross(books, CFG.size, CFG.fee, 0, CFG.cap).rows : []).filter((r) => !CFG.block.includes(r.base));
   // (only routes between exchanges that answered this minute are present, since cross() uses books we got)
   const candidates = selectCandidates(rows, CFG);
 
