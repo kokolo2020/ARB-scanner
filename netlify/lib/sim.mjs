@@ -4,8 +4,8 @@
 import { verifyRow } from "./core.mjs";
 
 export const CFG = {
-  epoch: 3,             // bump to wipe saved state on next run
-  exchanges: ["kucoin", "bybit", "okx", "mexc"],
+  epoch: 4,             // bump to wipe saved state on next run
+  exchanges: ["kucoin", "okx", "mexc"],
   size: 250,            // USDT per paper trade
   fee: 0.001,           // taker fee per side (0.1%)
   cap: 0.10,            // ignore gross spreads above 10% (almost always bad data)
