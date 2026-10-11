@@ -321,7 +321,8 @@ async function scan(){
     for(const r of triangular(books[ex],S.start,S.fee,S.cap))tri.push({...r,ex,key:ex+':'+r.key,est:r.net*S.size});
   }
   const c=cross(books,S.size,S.fee,S.transfer,S.cap);
-  const cr=c.rows;
+  const BLOCK=['LUNC','LRC','MAT','ALEX','EGLD','MGO','NXT','LINGO','QI'];
+  const cr=c.rows.filter(r=>!BLOCK.includes(r.base));
   tri.sort((a,b)=>b.net-a.net);cr.sort((a,b)=>b.net-a.net);
 
   const hits=[...tri,...cr].filter(r=>r.net>S.minNet);
