@@ -9,7 +9,7 @@ export const CFG = {
   size: 250,            // USDT per paper trade
   fee: 0.001,           // taker fee per side (0.1%)
   cap: 0.10,            // ignore gross spreads above 10% (almost always bad data)
-  watch: ["OBT", "LUNC", "EGLD"], // if non-empty, simulate only these coins (every route, every minute)
+  watch: ["LUNC", "EGLD"], // if non-empty, simulate only these coins (every route, every minute)
   topN: 8,              // candidates deep-checked per minute
   minQuotedNet: 0,      // only deep-check candidates that look profitable on top-of-book
   cooldownMin: 15,      // don't re-trade the same coin+route within this many minutes

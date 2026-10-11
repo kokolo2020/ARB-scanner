@@ -39,4 +39,4 @@ export default async () => {
   return new Response("ok");
 };
 
-export const config = { schedule: "* * * * *" };
+export const config = { schedule: "* * * * *", region: "fra" };
