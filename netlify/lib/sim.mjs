@@ -4,7 +4,7 @@
 import { verifyRow } from "./core.mjs";
 
 export const CFG = {
-  epoch: 4,             // bump to wipe saved state on next run
+  epoch: 5,             // bump to wipe saved state on next run
   exchanges: ["kucoin", "okx", "mexc"],
   size: 250,            // USDT per paper trade
   fee: 0.001,           // taker fee per side (0.1%)
@@ -13,16 +13,28 @@ export const CFG = {
   topN: 8,              // candidates deep-checked per minute
   minQuotedNet: 0,      // only deep-check candidates that look profitable on top-of-book
   cooldownMin: 15,      // don't re-trade the same coin+route within this many minutes
-  rebalancePct: 0.003,  // assumed cost of moving coins back between exchanges (0.3% of value moved)
+  rebalancePct: 0.003,  // legacy field, kept for the dashboard
+  // Real cost of moving a coin between exchanges, charged once per paper trade (the coins bought must be moved
+  // to the other side eventually). pct = % of value moved, flatCoin = fixed coin units, flatUsd = fixed dollars.
+  // LUNC measured on KuCoin 2026-10-11: 8000 LUNC + 3% of the amount. Others are ASSUMED until measured.
+  transfer: {
+    LUNC: { pct: 0.03, flatCoin: 8000 },
+    default: { pct: 0.003, flatUsd: 2, assumed: true },
+  },
   maxTrades: 300,       // recent trades kept in state
   maxLifetimes: 300,
   keepHours: 24 * 14,
 };
 
+export function transferCost(coin, size, px, cfg = CFG) {
+  const t = (cfg.transfer && (cfg.transfer[coin] || cfg.transfer.default)) || { pct: cfg.rebalancePct };
+  return size * (t.pct || 0) + (t.flatUsd || 0) + (t.flatCoin || 0) * (px || 0);
+}
+
 export function emptyState(now) {
   return {
     version: 1, epoch: CFG.epoch, startedAt: now, lastRun: null, runs: 0, cfg: CFG,
-    exStatus: {}, trades: [], tradeCount: 0, profit: 0, volume: 0,
+    exStatus: {}, trades: [], tradeCount: 0, profit: 0, transferCost: 0, volume: 0,
     byCoin: {}, watch: {}, inv: {}, lastPx: {}, cooldown: {}, open: {}, lifetimes: [], hours: {},
   };
 }
@@ -76,11 +88,12 @@ export function stepSim(state, { candidates, details, exErr = {}, exOk = [] }, n
       usedBuy.add(r.base + r.buy); usedSell.add(r.base + r.sell);
       const a = v.atSize;
       const qty = cfg.size * (1 - cfg.fee) / a.buyAvg;
-      state.trades.push({ t: now, coin: r.base, buy: r.buy, sell: r.sell, size: cfg.size, profit: a.profit, net: a.net, quotedNet: r.net, buyAvg: a.buyAvg, sellAvg: a.sellAvg, qty });
+      const tc = transferCost(r.base, cfg.size, a.sellAvg, cfg);
+      state.trades.push({ t: now, coin: r.base, buy: r.buy, sell: r.sell, size: cfg.size, profit: a.profit, transferCost: tc, netProfit: a.profit - tc, net: a.net, quotedNet: r.net, buyAvg: a.buyAvg, sellAvg: a.sellAvg, qty });
       if (state.trades.length > cfg.maxTrades) state.trades.shift();
-      state.tradeCount++; state.profit += a.profit; state.volume += cfg.size;
-      const c = state.byCoin[r.base] || (state.byCoin[r.base] = { n: 0, profit: 0, vol: 0 });
-      c.n++; c.profit += a.profit; c.vol += cfg.size;
+      state.tradeCount++; state.profit += a.profit; state.transferCost = (state.transferCost || 0) + tc; state.volume += cfg.size;
+      const c = state.byCoin[r.base] || (state.byCoin[r.base] = { n: 0, profit: 0, cost: 0, vol: 0 });
+      c.n++; c.profit += a.profit; c.cost = (c.cost || 0) + tc; c.vol += cfg.size;
       const inv = state.inv[r.base] || (state.inv[r.base] = {});
       inv[r.buy] = (inv[r.buy] || 0) + qty;
       inv[r.sell] = (inv[r.sell] || 0) - qty;
@@ -115,14 +128,14 @@ export function summarize(s) {
     const px = s.lastPx[coin] || 0;
     for (const ex of Object.keys(s.inv[coin])) if (s.inv[coin][ex] > 0) moved += s.inv[coin][ex] * px;
   }
-  const rebalanceCost = moved * s.cfg.rebalancePct;
+  const rebalanceCost = s.transferCost || 0; // real per-coin transfer costs charged per trade
   const life = s.lifetimes.map((x) => x.runs).sort((a, b) => a - b);
   return {
     startedAt: s.startedAt, lastRun: s.lastRun, runs: s.runs, cfg: s.cfg, exStatus: s.exStatus,
     tradeCount: s.tradeCount, profit: s.profit, volume: s.volume,
     rebalanceMoved: moved, rebalanceCost, netAfterRebalance: s.profit - rebalanceCost,
     days, watch: s.watch || {}, live: s.live || [],
-    byCoin: Object.entries(s.byCoin).map(([coin, v]) => ({ coin, ...v })).sort((a, b) => b.profit - a.profit).slice(0, 10),
+    byCoin: Object.entries(s.byCoin).map(([coin, v]) => ({ coin, ...v, net: v.profit - (v.cost || 0) })).sort((a, b) => b.net - a.net).slice(0, 10),
     trades: s.trades.slice(-20).reverse(),
     lifetimes: { count: life.length, median: life.length ? life[Math.floor(life.length / 2)] : null, max: life.length ? life[life.length - 1] : null, over5: life.filter((x) => x >= 5).length },
     openNow: Object.keys(s.open).length,
