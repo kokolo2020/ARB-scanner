@@ -4,7 +4,7 @@ function splitSymbol(s){for(const q of QUOTES){if(s.endsWith(q)&&s.length>q.leng
 function num(x){const n=parseFloat(x);return isFinite(n)&&n>0?n:null;}
 function mk(base,quote,bid,ask,bq,aq){bid=num(bid);ask=num(ask);if(!base||!bid||!ask||!QUOTES.includes(quote))return null;return{base,quote,bid,ask,bidQty:num(bq),askQty:num(aq)};}
 const parsers={
-  binance(data){const out=[];for(const t of data){const p=splitSymbol(t.symbol);if(!p)continue;const m=mk(p.base,p.quote,t.bidPrice,t.askPrice,t.bidQty,t.askQty);if(m)out.push(m);}return out;},
+  mexc(data){const out=[];for(const t of data){const p=splitSymbol(t.symbol);if(!p)continue;const m=mk(p.base,p.quote,t.bidPrice,t.askPrice,t.bidQty,t.askQty);if(m)out.push(m);}return out;},
   kucoin(data){const out=[];for(const t of(data.data&&data.data.ticker)||[]){const[b,q]=String(t.symbol).split('-');const m=mk(b,q,t.buy,t.sell,null,null);if(m)out.push(m);}return out;},
   bybit(data){const out=[];for(const t of(data.result&&data.result.list)||[]){const p=splitSymbol(String(t.symbol));if(!p)continue;const m=mk(p.base,p.quote,t.bid1Price,t.ask1Price,t.bid1Size,t.ask1Size);if(m)out.push(m);}return out;},
   okx(data){const out=[];for(const t of data.data||[]){const[b,q]=String(t.instId).split('-');const m=mk(b,q,t.bidPx,t.askPx,t.bidSz,t.askSz);if(m)out.push(m);}return out;}

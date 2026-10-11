@@ -5,12 +5,12 @@ const TICKERS = {
   kucoin: "https://api.kucoin.com/api/v1/market/allTickers",
   bybit: "https://api.bybit.com/v5/market/tickers?category=spot",
   okx: "https://www.okx.com/api/v5/market/tickers?instType=SPOT",
-  binance: "https://api.binance.com/api/v3/ticker/bookTicker",
+  mexc: "https://api.mexc.com/api/v3/ticker/bookTicker",
 };
 const DETAIL = {
-  binance: {
-    book: (s) => `https://api.binance.com/api/v3/depth?symbol=${s}USDT&limit=50`,
-    trades: (s) => `https://api.binance.com/api/v3/trades?symbol=${s}USDT&limit=20`,
+  mexc: {
+    book: (s) => `https://api.mexc.com/api/v3/depth?symbol=${s}USDT&limit=50`,
+    trades: (s) => `https://api.mexc.com/api/v3/trades?symbol=${s}USDT&limit=20`,
   },
   kucoin: {
     book: (s) => `https://api.kucoin.com/api/v1/market/orderbook/level2_20?symbol=${s}-USDT`,

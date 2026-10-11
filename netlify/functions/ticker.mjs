@@ -1,19 +1,19 @@
 // Tiny read-only proxy for public exchange market data.
 // Whitelisted URL templates only, so it cannot be used as an open proxy.
 // Served at /.netlify/functions/ticker (same origin as the page):
-//   ?ex=kucoin|bybit|okx|binance                      -> all-pairs ticker list
+//   ?ex=kucoin|bybit|okx|mexc                      -> all-pairs ticker list
 //   ?ex=...&kind=book|trades&sym=BASE (quote is USDT)  -> one pair's order book / recent trades
 const TICKERS = {
   bybit: "https://api.bybit.com/v5/market/tickers?category=spot",
-  binance: "https://data-api.binance.vision/api/v3/ticker/bookTicker",
+  mexc: "https://api.mexc.com/api/v3/ticker/bookTicker",
   kucoin: "https://api.kucoin.com/api/v1/market/allTickers",
   okx: "https://www.okx.com/api/v5/market/tickers?instType=SPOT",
 };
 
 const DETAIL = {
-  binance: {
-    book: (s) => `https://data-api.binance.vision/api/v3/depth?symbol=${s}USDT&limit=50`,
-    trades: (s) => `https://data-api.binance.vision/api/v3/trades?symbol=${s}USDT&limit=20`,
+  mexc: {
+    book: (s) => `https://api.mexc.com/api/v3/depth?symbol=${s}USDT&limit=50`,
+    trades: (s) => `https://api.mexc.com/api/v3/trades?symbol=${s}USDT&limit=20`,
   },
   kucoin: {
     book: (s) => `https://api.kucoin.com/api/v1/market/orderbook/level2_20?symbol=${s}-USDT`,

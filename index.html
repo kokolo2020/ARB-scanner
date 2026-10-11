@@ -43,7 +43,7 @@ h4{margin:14px 0 6px;font-size:14px}
 </head>
 <body>
 <h1>Arb Scanner</h1>
-<div class="sub">Detection only. No API keys, no orders. Public top-of-book quotes from KuCoin, Bybit, OKX (and Binance, optional).</div>
+<div class="sub">Detection only. No API keys, no orders. Public top-of-book quotes from KuCoin, Bybit, OKX and MEXC.</div>
 
 <div id="banner" class="banner"></div>
 
@@ -68,7 +68,7 @@ h4{margin:14px 0 6px;font-size:14px}
     <label style="flex-direction:row;align-items:center;gap:5px;font-size:13px;color:var(--text)"><input type="checkbox" data-ex="kucoin" checked style="padding:0"> KuCoin</label>
     <label style="flex-direction:row;align-items:center;gap:5px;font-size:13px;color:var(--text)"><input type="checkbox" data-ex="bybit" checked style="padding:0"> Bybit</label>
     <label style="flex-direction:row;align-items:center;gap:5px;font-size:13px;color:var(--text)"><input type="checkbox" data-ex="okx" checked style="padding:0"> OKX</label>
-    <label style="flex-direction:row;align-items:center;gap:5px;font-size:13px;color:var(--text)"><input type="checkbox" data-ex="binance" style="padding:0"> Binance</label>
+    <label style="flex-direction:row;align-items:center;gap:5px;font-size:13px;color:var(--text)"><input type="checkbox" data-ex="mexc" style="padding:0"> MEXC</label>
   </div>
   <div class="row">
     <button id="scanBtn">Scan now</button>
@@ -107,7 +107,7 @@ function splitSymbol(s){for(const q of QUOTES){if(s.endsWith(q)&&s.length>q.leng
 function num(x){const n=parseFloat(x);return isFinite(n)&&n>0?n:null;}
 function mk(base,quote,bid,ask,bq,aq){bid=num(bid);ask=num(ask);if(!base||!bid||!ask||!QUOTES.includes(quote))return null;return{base,quote,bid,ask,bidQty:num(bq),askQty:num(aq)};}
 const parsers={
-  binance(data){const out=[];for(const t of data){const p=splitSymbol(t.symbol);if(!p)continue;const m=mk(p.base,p.quote,t.bidPrice,t.askPrice,t.bidQty,t.askQty);if(m)out.push(m);}return out;},
+  mexc(data){const out=[];for(const t of data){const p=splitSymbol(t.symbol);if(!p)continue;const m=mk(p.base,p.quote,t.bidPrice,t.askPrice,t.bidQty,t.askQty);if(m)out.push(m);}return out;},
   kucoin(data){const out=[];for(const t of(data.data&&data.data.ticker)||[]){const[b,q]=String(t.symbol).split('-');const m=mk(b,q,t.buy,t.sell,null,null);if(m)out.push(m);}return out;},
   bybit(data){const out=[];for(const t of(data.result&&data.result.list)||[]){const p=splitSymbol(String(t.symbol));if(!p)continue;const m=mk(p.base,p.quote,t.bid1Price,t.ask1Price,t.bid1Size,t.ask1Size);if(m)out.push(m);}return out;},
   okx(data){const out=[];for(const t of data.data||[]){const[b,q]=String(t.instId).split('-');const m=mk(b,q,t.bidPx,t.askPx,t.bidSz,t.askSz);if(m)out.push(m);}return out;}
@@ -251,7 +251,7 @@ async function viaRoutes(ex,urls){
   throw new Error(errs.join(' | '));
 }
 const sources={
-  binance:async()=>{const r=await viaRoutes('binance',['https://api.binance.com/api/v3/ticker/bookTicker','https://data-api.binance.vision/api/v3/ticker/bookTicker']);return{rows:parsers.binance(r.d),label:r.label};},
+  mexc:async()=>{const r=await viaRoutes('mexc',['https://api.mexc.com/api/v3/ticker/bookTicker']);return{rows:parsers.mexc(r.d),label:r.label};},
   bybit:async()=>{const r=await viaRoutes('bybit',['https://api.bybit.com/v5/market/tickers?category=spot','https://api.bytick.com/v5/market/tickers?category=spot']);if(r.d&&r.d.retCode!==undefined&&r.d.retCode!==0)throw new Error('Bybit: '+r.d.retMsg);return{rows:parsers.bybit(r.d),label:r.label};},
   kucoin:async()=>{const r=await viaRoutes('kucoin',['https://api.kucoin.com/api/v1/market/allTickers']);return{rows:parsers.kucoin(r.d),label:r.label};},
   okx:async()=>{const r=await viaRoutes('okx',['https://www.okx.com/api/v5/market/tickers?instType=SPOT']);return{rows:parsers.okx(r.d),label:r.label};}
@@ -266,7 +266,7 @@ const usd=x=>(x<0?'-':'')+'$'+Math.abs(x).toLocaleString(undefined,{maximumFract
 const cls=x=>x>0?'pos':'neg';
 function loadLog(){try{return JSON.parse(localStorage.getItem('arb_log_v1')||'[]');}catch(e){return[];}}
 function saveLog(l){try{localStorage.setItem('arb_log_v1',JSON.stringify(l));}catch(e){}}
-const state={scans:0,hitScans:0,best:null,seen:{},log:loadLog(),tab:'tri',tri:[],cross:[],dropped:0,busy:false,timer:null,names:['kucoin','bybit','okx','binance']};
+const state={scans:0,hitScans:0,best:null,seen:{},log:loadLog(),tab:'tri',tri:[],cross:[],dropped:0,busy:false,timer:null,names:['kucoin','bybit','okx','mexc']};
 function enabledNames(){const on=[...document.querySelectorAll('#exRow input[data-ex]:checked')].map(i=>i.dataset.ex);return state.names.filter(n=>on.includes(n));}
 
 function settings(){
@@ -395,7 +395,7 @@ function exportCSV(){
 // ---------- deep check ----------
 state.deep=[];state.deepAt=null;state.deepBusy=false;
 const detailUrls={
-  binance:{book:s=>`https://api.binance.com/api/v3/depth?symbol=${s}USDT&limit=50`,trades:s=>`https://api.binance.com/api/v3/trades?symbol=${s}USDT&limit=20`},
+  mexc:{book:s=>`https://api.mexc.com/api/v3/depth?symbol=${s}USDT&limit=50`,trades:s=>`https://api.mexc.com/api/v3/trades?symbol=${s}USDT&limit=20`},
   kucoin:{book:s=>`https://api.kucoin.com/api/v1/market/orderbook/level2_20?symbol=${s}-USDT`,trades:s=>`https://api.kucoin.com/api/v1/market/histories?symbol=${s}-USDT`},
   bybit:{book:s=>`https://api.bybit.com/v5/market/orderbook?category=spot&symbol=${s}USDT&limit=50`,trades:s=>`https://api.bybit.com/v5/market/recent-trade?category=spot&symbol=${s}USDT&limit=20`},
   okx:{book:s=>`https://www.okx.com/api/v5/market/books?instId=${s}-USDT&sz=20`,trades:s=>`https://www.okx.com/api/v5/market/trades?instId=${s}-USDT&limit=20`}
